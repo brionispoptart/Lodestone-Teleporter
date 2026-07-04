@@ -9,6 +9,68 @@ const validCompassTypes = new Set(["minecraft:compass", "minecraft:lodestone_com
 const lorePrefix = "LT|";
 const loreUniquePrefix = "LTID|";
 const maxTuneWriteAttempts = 10;
+const lodestoneBlockType = "minecraft:lodestone";
+const lodestoneRegistryPropertyId = "lt:lodestone_registry_v1";
+const nonOwnerTeleportLevelCost = 1;
+
+function getLodestoneKey(x, y, z, dimensionId) {
+    return `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}|${dimensionId}`;
+}
+
+function readLodestoneRegistry() {
+    const raw = world.getDynamicProperty(lodestoneRegistryPropertyId);
+    if (typeof raw !== "string" || !raw) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+            return parsed;
+        }
+    } catch {
+        // If data is malformed, recover with an empty registry to keep gameplay functional.
+    }
+
+    return {};
+}
+
+function writeLodestoneRegistry(registry) {
+    world.setDynamicProperty(lodestoneRegistryPropertyId, JSON.stringify(registry));
+}
+
+function setLodestoneOwner(x, y, z, dimensionId, ownerId) {
+    const registry = readLodestoneRegistry();
+    const key = getLodestoneKey(x, y, z, dimensionId);
+    registry[key] = { ownerId };
+    writeLodestoneRegistry(registry);
+}
+
+function ensureLodestoneOwner(x, y, z, dimensionId, ownerId) {
+    const registry = readLodestoneRegistry();
+    const key = getLodestoneKey(x, y, z, dimensionId);
+
+    if (!registry[key]) {
+        registry[key] = { ownerId };
+        writeLodestoneRegistry(registry);
+    }
+}
+
+function removeLodestoneOwner(x, y, z, dimensionId) {
+    const registry = readLodestoneRegistry();
+    const key = getLodestoneKey(x, y, z, dimensionId);
+
+    if (!registry[key]) return;
+
+    delete registry[key];
+    writeLodestoneRegistry(registry);
+}
+
+function getLodestoneOwnerEntry(x, y, z, dimensionId) {
+    const registry = readLodestoneRegistry();
+    const key = getLodestoneKey(x, y, z, dimensionId);
+    return registry[key];
+}
 
 function safePlaySound(dimension, soundId, location) {
     try {
@@ -227,10 +289,27 @@ world.beforeEvents.playerLeave.subscribe((e) => {
     pendingTuneState.delete(e.player.id);
 });
 
+world.afterEvents.playerPlaceBlock.subscribe((e) => {
+    const { block, player } = e;
+    if (block.typeId !== lodestoneBlockType) return;
+
+    const { x, y, z } = block.location;
+    const dimensionId = block.dimension.id;
+    setLodestoneOwner(x, y, z, dimensionId, player.id);
+});
+
+world.afterEvents.playerBreakBlock.subscribe((e) => {
+    if (e.brokenBlockPermutation.type.id !== lodestoneBlockType) return;
+
+    const { x, y, z } = e.block.location;
+    const dimensionId = e.block.dimension.id;
+    removeLodestoneOwner(x, y, z, dimensionId);
+});
+
 world.beforeEvents.playerInteractWithBlock.subscribe((e) => {
     const { block, itemStack, player } = e;
     if (!itemStack || !validCompassTypes.has(itemStack.typeId)) return;
-    if (block.typeId !== "minecraft:lodestone") return;
+    if (block.typeId !== lodestoneBlockType) return;
 
     const inventoryComp = player.getComponent("minecraft:inventory");
     if (!inventoryComp || !inventoryComp.container) return;
@@ -265,10 +344,14 @@ world.afterEvents.playerInteractWithBlock.subscribe((e) => {
     const { block, itemStack, player } = e;
 
     if (!itemStack || !validCompassTypes.has(itemStack.typeId)) return;
-    if (block.typeId !== "minecraft:lodestone") return;
+    if (block.typeId !== lodestoneBlockType) return;
 
     const { x, y, z } = block.location;
     const dimensionId = block.dimension.id;
+
+    // Backfill ownership for lodestones that existed before registry support.
+    ensureLodestoneOwner(x, y, z, dimensionId, player.id);
+
     const beforeSnapshot = pendingTuneState.get(player.id);
     pendingTuneState.delete(player.id);
 
@@ -289,6 +372,17 @@ function teleportPlayer(player) {
     if (!storedTarget) return;
 
     const { x: lodeX, y: lodeY, z: lodeZ, dimensionId: lodeDimension } = storedTarget;
+    const lodestoneEntry = getLodestoneOwnerEntry(lodeX, lodeY, lodeZ, lodeDimension);
+    if (!lodestoneEntry) {
+        player.sendMessage("Teleport failed: this lodestone link is no longer valid.");
+        return;
+    }
+
+    const isForeignLodestone = typeof lodestoneEntry.ownerId === "string" && lodestoneEntry.ownerId !== player.id;
+    if (isForeignLodestone && player.level < nonOwnerTeleportLevelCost) {
+        player.sendMessage(`You need ${nonOwnerTeleportLevelCost} level to use another player's lodestone.`);
+        return;
+    }
 
     let targetDimension;
     try {
@@ -306,6 +400,9 @@ function teleportPlayer(player) {
     try {
         playTeleportEffects(fromDimension, fromLocation, targetDimension, toLocation);
         player.teleport(toLocation, { dimension: targetDimension });
+        if (isForeignLodestone) {
+            player.addLevels(-nonOwnerTeleportLevelCost);
+        }
         playTeleportEffects(targetDimension, toLocation, targetDimension, toLocation);
     } catch {
         return;

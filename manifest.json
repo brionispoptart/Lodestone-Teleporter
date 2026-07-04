@@ -1,19 +1,19 @@
 {
   "format_version": 2,
   "header": {
-    "description": "Lodestone Teleporter v1.3.0 - tune a compass to a lodestone and teleport on triple sneak.",
-    "name": "Lodestone Teleporter",
+    "description": "Lodestone Teleporter v1.3.1 - tune a compass to a lodestone and teleport on triple sneak.",
+    "name": "Lodestone Teleporter v1.3.1",
     "uuid": "0f47a278-f1ac-48b6-bbf2-57124481856a",
-    "version": [1, 3, 0],
+    "version": [1, 3, 1],
     "min_engine_version": [1, 20, 0]
   },
   "modules": [
     {
-      "description": "Main script module for Lodestone Teleporter v1.3.0.",
+      "description": "Main script module for Lodestone Teleporter v1.3.1.",
       "type": "script",
       "language": "javascript",
       "uuid": "2664cdbb-0e38-492c-b87f-c339fc0b6330",
-      "version": [1, 3, 0],
+      "version": [1, 3, 1],
       "entry": "scripts/main.js"
     }
   ],
